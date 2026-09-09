@@ -27,7 +27,7 @@ static const char *texts[MOD_TYPE_COUNT] = {
 };
 #else
 static const char *texts[MOD_TYPE_COUNT] = {
-    "GUI", "ALT", "CTRL", "SHFT"
+    "SPR", "ALT", "CTRL", "SHFT"
 };
 #endif
 
