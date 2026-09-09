@@ -31,10 +31,10 @@ struct psptr_peripheral_slot {
     struct bt_conn *conn;
 };
 
-static struct psptr_peripheral_slot peripherals[ZMK_SPLIT_BLE_PERIPHERAL_COUNT];
+static struct psptr_peripheral_slot peripherals[CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_COUNT];
 
 static int psptr_peripheral_slot_index_for_conn(struct bt_conn *conn) {
-    for (int i = 0; i < ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
+    for (int i = 0; i < CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
         if (peripherals[i].conn == conn) {
             return i;
         }
@@ -51,7 +51,7 @@ static struct psptr_peripheral_slot *psptr_peripheral_slot_for_conn(struct bt_co
 }
 
 static int release_psptr_peripheral_slot(int index) {
-    if (index < 0 || index >= ZMK_SPLIT_BLE_PERIPHERAL_COUNT) {
+    if (index < 0 || index >= CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_COUNT) {
         return -EINVAL;
     }
 
@@ -73,7 +73,7 @@ static int release_psptr_peripheral_slot(int index) {
 
 static int reserve_psptr_peripheral_slot_for_conn(struct bt_conn *conn) {
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_PREF_WEAK_BOND)
-    for (int i = 0; i < ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
+    for (int i = 0; i < CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
         if (peripherals[i].state == PERIPHERAL_SLOT_STATE_OPEN) {
             // Be sure the slot is fully reinitialized.
             release_psptr_peripheral_slot(i);

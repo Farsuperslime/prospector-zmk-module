@@ -12,14 +12,14 @@
 
 static sys_slist_t widgets = SYS_SLIST_STATIC_INIT(&widgets);
 
-static uint8_t battery_levels[ZMK_SPLIT_BLE_PERIPHERAL_COUNT];
-static bool connected[ZMK_SPLIT_BLE_PERIPHERAL_COUNT];
+static uint8_t battery_levels[CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_COUNT];
+static bool connected[CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_COUNT];
 
 static void update_label_text(lv_obj_t *label) {
     static char buf[32];
     char *ptr = buf;
 
-    for (int i = 0; i < ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
+    for (int i = 0; i < CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
         if (i > 0) {
             *ptr++ = '/';
         }
@@ -47,7 +47,7 @@ struct battery_state {
 };
 
 static void battery_update_cb(struct battery_state state) {
-    if (state.source < ZMK_SPLIT_BLE_PERIPHERAL_COUNT) {
+    if (state.source < CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_COUNT) {
         battery_levels[state.source] = state.level;
         refresh_all_widgets();
     }
@@ -72,7 +72,7 @@ struct connection_state {
 };
 
 static void connection_update_cb(struct connection_state state) {
-    if (state.source < ZMK_SPLIT_BLE_PERIPHERAL_COUNT) {
+    if (state.source < CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_COUNT) {
         connected[state.source] = state.connected;
         refresh_all_widgets();
     }
@@ -99,7 +99,7 @@ int zmk_widget_battery_label_init(struct zmk_widget_battery_label *widget, lv_ob
     lv_obj_set_style_text_color(widget->obj, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(widget->obj, LV_OPA_TRANSP, 0);
 
-    for (int i = 0; i < ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
+    for (int i = 0; i < CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
         battery_levels[i] = 0;
         connected[i] = false;
     }

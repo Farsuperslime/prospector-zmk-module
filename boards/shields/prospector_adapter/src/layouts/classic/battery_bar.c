@@ -22,7 +22,7 @@ struct connection_update_state {
 };
 
 static void set_battery_bar_value(lv_obj_t *widget_obj, struct battery_update_state state, bool is_initialized) {
-    if (!is_initialized || state.source >= ZMK_SPLIT_BLE_PERIPHERAL_COUNT) {
+    if (!is_initialized || state.source >= CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_COUNT) {
         return;
     }
 
@@ -54,7 +54,7 @@ static void set_battery_bar_value(lv_obj_t *widget_obj, struct battery_update_st
 }
 
 static void set_battery_bar_connected(lv_obj_t *widget_obj, struct connection_update_state state, bool is_initialized) {
-    if (!is_initialized || state.source >= ZMK_SPLIT_BLE_PERIPHERAL_COUNT) {
+    if (!is_initialized || state.source >= CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_COUNT) {
         return;
     }
 
@@ -156,7 +156,7 @@ int zmk_widget_battery_bar_init(struct zmk_widget_battery_bar *widget, lv_obj_t 
     lv_obj_set_style_pad_bottom(widget->obj, 12, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(widget->obj, 16, LV_PART_MAIN);
 
-    for (int i = 0; i < ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
+    for (int i = 0; i < CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
         lv_obj_t *info_container = lv_obj_create(widget->obj);
         lv_obj_center(info_container);
         lv_obj_set_height(info_container, lv_pct(100));
