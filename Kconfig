@@ -81,3 +81,12 @@ config PROSPECTOR_LAYER_NAME_UPPERCASE
     default y
     help
       When enabled, layer names will be converted to uppercase for display.
+
+config PROSPECTOR_IDLE_TIMEOUT_S
+    int "Screen idle timeout in seconds (0 = never off)"
+    default 0
+    help
+      Turn the display off after this many seconds without a keypress or
+      layer change. On the next keypress or layer change the display is
+      restored to its previous brightness (ambient-sensor or fixed,
+      whichever is active). 0 disables the idle timeout.
