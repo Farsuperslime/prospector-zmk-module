@@ -186,9 +186,9 @@ static struct bt_conn_cb conn_callbacks = {
     .disconnected = split_central_disconnected,
 };
 
-static int zmk_split_bt_central_init(void) {
+static int prospector_central_status_observer_init(void) {
     bt_conn_cb_register(&conn_callbacks);
     return 0;
 }
 
-SYS_INIT(zmk_split_bt_central_init, APPLICATION, CONFIG_ZMK_BLE_INIT_PRIORITY);
+SYS_INIT(prospector_central_status_observer_init, APPLICATION, CONFIG_ZMK_BLE_INIT_PRIORITY);
