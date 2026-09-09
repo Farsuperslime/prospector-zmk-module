@@ -196,21 +196,64 @@ SYS_INIT(init_fixed_brightness, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
 static int64_t prospector_last_activity;
 
+// Idle fade-off state. prospector_fading_off is true while the screen is
+// smoothly dimming to 0; during this time the screen is logically still
+// "awake" (so the idle timer keeps being reset by activity), but a wake
+// event also aborts the fade and restores full brightness.
+static volatile bool prospector_fading_off;
+static volatile bool prospector_fade_abort;
+
+// Fade-out step interval. ~15ms per step gives roughly 750ms total
+// fade from a brightness of 50 -- long enough to read as a deliberate
+// fade rather than a flicker, short enough that a wake during the fade
+// returns to full brightness within a perceptible beat.
+#define PROSPECTOR_FADE_STEP_MS 15
+
 static void prospector_screen_set_awake(bool awake) {
-    if (awake == prospector_screen_awake) {
-        return;
-    }
-    prospector_screen_awake = awake;
     if (awake) {
-        if (led_set_brightness(pwm_leds_dev, DISP_BL, prospector_last_brightness)) {
-            LOG_ERR("Failed to set brightness");
+        // Wake path: cancel any in-progress fade and restore brightness.
+        if (prospector_fading_off) {
+            prospector_fade_abort = true;
+            prospector_fading_off = false;
+            if (led_set_brightness(pwm_leds_dev, DISP_BL, prospector_last_brightness)) {
+                LOG_ERR("Failed to set brightness");
+            }
+            LOG_INF("Screen woken (fade aborted)");
+        } else if (!prospector_screen_awake) {
+            prospector_screen_awake = true;
+            if (led_set_brightness(pwm_leds_dev, DISP_BL, prospector_last_brightness)) {
+                LOG_ERR("Failed to set brightness");
+            }
+            LOG_INF("Screen woken from idle timeout");
         }
-        LOG_INF("Screen woken from idle timeout");
     } else {
+        // Sleep path: smoothly fade from last brightness to 0.
+        if (!prospector_screen_awake) {
+            return; // already asleep
+        }
+        prospector_fading_off = true;
+        // prospector_screen_awake stays true so the activity listener
+        // keeps resetting the idle timer during the fade.
+
+        int b = prospector_last_brightness;
+        while (b > 0) {
+            if (prospector_fade_abort) {
+                prospector_fade_abort = false;
+                LOG_INF("Fade-off aborted by activity");
+                return;
+            }
+            if (led_set_brightness(pwm_leds_dev, DISP_BL, b)) {
+                LOG_ERR("Failed to set brightness");
+            }
+            b--;
+            k_msleep(PROSPECTOR_FADE_STEP_MS);
+        }
         if (led_set_brightness(pwm_leds_dev, DISP_BL, 0)) {
             LOG_ERR("Failed to set brightness");
         }
-        LOG_INF("Idle timeout reached, screen off");
+        prospector_fading_off = false;
+        prospector_screen_awake = false;
+        LOG_INF("Idle timeout reached, screen faded off");
     }
 }
 
@@ -238,7 +281,7 @@ K_THREAD_DEFINE(prospector_idle_tid, 512, prospector_idle_thread, NULL, NULL, NU
 
 static int prospector_activity_listener(const zmk_event_t *eh) {
     prospector_last_activity = k_uptime_get();
-    if (!prospector_screen_awake) {
+    if (!prospector_screen_awake || prospector_fading_off) {
         prospector_screen_set_awake(true);
         k_wakeup(prospector_idle_tid);
     }
