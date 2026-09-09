@@ -22,6 +22,10 @@ static const struct device *pwm_leds_dev = DEVICE_DT_GET_ONE(pwm_leds);
 // whether the ambient sensor or fixed brightness is active, so the idle
 // timeout can dim to 0 and restore the correct value on the next keypress.
 static uint8_t prospector_last_brightness = 100;
+// Actual backlight level currently applied to the LED (vs. last_brightness,
+// the level the display should hold while awake). A wake that interrupts a
+// fade-off resumes from this level so the fade-in mirrors the fade-out.
+static uint8_t prospector_led_level = 100;
 #if CONFIG_PROSPECTOR_IDLE_TIMEOUT_S > 0
 static bool prospector_screen_awake = true;
 #endif
@@ -36,6 +40,7 @@ static void prospector_apply_brightness(uint8_t value) {
         return;
     }
 #endif
+    prospector_led_level = value;
     if (led_set_brightness(pwm_leds_dev, DISP_BL, value)) {
         LOG_ERR("Failed to set brightness");
     }
@@ -196,84 +201,109 @@ SYS_INIT(init_fixed_brightness, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
 static int64_t prospector_last_activity;
 
-// Idle fade-off state. prospector_fading_off is true while the screen is
-// smoothly dimming to 0; during this time the screen is logically still
-// "awake" (so the idle timer keeps being reset by activity), but a wake
-// event also aborts the fade and restores full brightness.
+// Screen lifecycle, driven by prospector_idle_thread (a dedicated worker) so
+// neither a fade-out nor a fade-in ever blocks ZMK's event thread: a fade is
+// ~750ms of k_msleep and must not stall key processing.
+//
+// prospector_screen_awake is true whenever the display is showing content,
+// including mid-fade; it drops to false only once a fade-out reaches 0.
+// prospector_fading_off marks the worker's downward ramp -- during it the
+// screen still counts as awake so activity keeps resetting the idle timer,
+// and a wake aborts the ramp and fades back in. prospector_wake_pending is
+// set by the activity listener when the screen is off or fading off; the
+// worker consumes it to run the symmetric fade-in from the current level.
 static volatile bool prospector_fading_off;
-static volatile bool prospector_fade_abort;
+static volatile bool prospector_wake_pending;
 
-// Fade-out step interval. ~15ms per step gives roughly 750ms total
-// fade from a brightness of 50 -- long enough to read as a deliberate
-// fade rather than a flicker, short enough that a wake during the fade
-// returns to full brightness within a perceptible beat.
+// Parks the worker while the screen is off. It is given (along with
+// wake_pending) on activity, so a wake can never be lost to a race with the
+// worker parking -- a token given before the worker blocks is simply consumed
+// the moment it does.
+K_SEMAPHORE_DEFINE(prospector_wake_sem, 0, 1);
+
+// Fade step interval. ~15ms per step gives roughly 750ms total fade from a
+// brightness of 50 -- long enough to read as a deliberate fade rather than a
+// flicker, short enough that a wake lands at full brightness within a beat.
 #define PROSPECTOR_FADE_STEP_MS 15
 
-static void prospector_screen_set_awake(bool awake) {
-    if (awake) {
-        // Wake path: cancel any in-progress fade and restore brightness.
-        if (prospector_fading_off) {
-            prospector_fade_abort = true;
-            prospector_fading_off = false;
-            if (led_set_brightness(pwm_leds_dev, DISP_BL, prospector_last_brightness)) {
-                LOG_ERR("Failed to set brightness");
-            }
-            LOG_INF("Screen woken (fade aborted)");
-        } else if (!prospector_screen_awake) {
-            prospector_screen_awake = true;
-            if (led_set_brightness(pwm_leds_dev, DISP_BL, prospector_last_brightness)) {
-                LOG_ERR("Failed to set brightness");
-            }
-            LOG_INF("Screen woken from idle timeout");
-        }
-    } else {
-        // Sleep path: smoothly fade from last brightness to 0.
-        if (!prospector_screen_awake) {
-            return; // already asleep
-        }
-        prospector_fading_off = true;
-        // prospector_screen_awake stays true so the activity listener
-        // keeps resetting the idle timer during the fade.
-
-        int b = prospector_last_brightness;
-        while (b > 0) {
-            if (prospector_fade_abort) {
-                prospector_fade_abort = false;
-                LOG_INF("Fade-off aborted by activity");
-                return;
-            }
-            if (led_set_brightness(pwm_leds_dev, DISP_BL, b)) {
-                LOG_ERR("Failed to set brightness");
-            }
-            b--;
-            k_msleep(PROSPECTOR_FADE_STEP_MS);
-        }
-        if (led_set_brightness(pwm_leds_dev, DISP_BL, 0)) {
-            LOG_ERR("Failed to set brightness");
-        }
-        prospector_fading_off = false;
-        prospector_screen_awake = false;
-        LOG_INF("Idle timeout reached, screen faded off");
+// Writes a backlight level and records it, so a wake that interrupts a
+// fade-off resumes from the actual level rather than snapping to 0 then up.
+static void prospector_write_led(uint8_t level) {
+    prospector_led_level = level;
+    if (led_set_brightness(pwm_leds_dev, DISP_BL, level)) {
+        LOG_ERR("Failed to set brightness");
     }
+}
+
+// Downward ramp: last brightness -> 0, worker thread. Aborts (leaving the
+// LED where it is) if a wake is queued mid-ramp; the caller then fades back in.
+static void prospector_fade_out(void) {
+    int b = prospector_last_brightness;
+    while (b > 0) {
+        if (prospector_wake_pending) {
+            return; // a fade-in is queued; resume from the current level
+        }
+        prospector_write_led(b);
+        b--;
+        k_msleep(PROSPECTOR_FADE_STEP_MS);
+    }
+    prospector_write_led(0);
+    prospector_screen_awake = false;
+    LOG_INF("Idle timeout reached, screen faded off");
+}
+
+// Upward ramp: current level -> last brightness, worker thread. Mirror of the
+// fade-out so waking the display looks like the reverse of the idle dim. Runs
+// on the worker, never ZMK's event thread.
+static void prospector_fade_in(void) {
+    prospector_screen_awake = true;
+    int b = prospector_led_level;
+    int target = prospector_last_brightness;
+    while (b < target) {
+        b++;
+        prospector_write_led(b);
+        k_msleep(PROSPECTOR_FADE_STEP_MS);
+    }
+    if (prospector_led_level != target) {
+        prospector_write_led(target); // already at target: ensure it is applied
+    }
+    LOG_INF("Screen woken, faded back in");
 }
 
 static void prospector_idle_thread(void) {
     prospector_last_activity = k_uptime_get();
 
     while (1) {
-        if (prospector_screen_awake) {
-            int64_t elapsed = k_uptime_get() - prospector_last_activity;
-            int64_t remaining = PROSPECTOR_IDLE_TIMEOUT_MS - elapsed;
-
-            if (remaining <= 0) {
-                prospector_screen_set_awake(false);
-                k_sleep(K_FOREVER); // woken by prospector_activity_listener via k_wakeup()
-            } else {
-                k_sleep(K_MSEC(remaining));
-            }
-        } else {
-            k_sleep(K_FOREVER);
+        // Service a queued wake: the screen is off (or fading off) and
+        // activity arrived -- run the fade-in on this worker thread.
+        if (prospector_wake_pending) {
+            prospector_wake_pending = false;
+            prospector_fading_off = false;
+            prospector_fade_in();
+            prospector_last_activity = k_uptime_get();
+            continue;
         }
+
+        if (!prospector_screen_awake) {
+            // Fully faded off: park until activity signals a fade-in.
+            k_sem_take(&prospector_wake_sem, K_FOREVER);
+            continue;
+        }
+
+        // Screen on: count down the idle timeout.
+        int64_t elapsed = k_uptime_get() - prospector_last_activity;
+        int64_t remaining = PROSPECTOR_IDLE_TIMEOUT_MS - elapsed;
+        if (remaining > 0) {
+            k_sleep(K_MSEC(remaining));
+            continue;
+        }
+
+        // Timeout elapsed: fade off. On an early abort (wake mid-ramp)
+        // screen_awake is still true and the top of the loop runs the queued
+        // fade-in; otherwise it parks at 0 until the next activity.
+        prospector_fading_off = true;
+        prospector_fade_out();
+        prospector_fading_off = false;
     }
 }
 
@@ -282,8 +312,10 @@ K_THREAD_DEFINE(prospector_idle_tid, 512, prospector_idle_thread, NULL, NULL, NU
 static int prospector_activity_listener(const zmk_event_t *eh) {
     prospector_last_activity = k_uptime_get();
     if (!prospector_screen_awake || prospector_fading_off) {
-        prospector_screen_set_awake(true);
-        k_wakeup(prospector_idle_tid);
+        // Screen off or fading off: request a fade-in and unpark the worker.
+        // The worker owns the ramp; never block ZMK's event thread here.
+        prospector_wake_pending = true;
+        k_sem_give(&prospector_wake_sem);
     }
     return 0;
 }
