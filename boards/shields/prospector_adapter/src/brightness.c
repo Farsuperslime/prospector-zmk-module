@@ -21,7 +21,7 @@ static const struct device *pwm_leds_dev = DEVICE_DT_GET_ONE(pwm_leds);
 // Tracks the brightness the display should show while awake, independent of
 // whether the ambient sensor or fixed brightness is active, so the idle
 // timeout can dim to 0 and restore the correct value on the next keypress.
-static uint8_t prospector_last_brightness = 100;
+uint8_t prospector_last_brightness = 100;
 // Actual backlight level currently applied to the LED (vs. last_brightness,
 // the level the display should hold while awake). A wake that interrupts a
 // fade-off resumes from this level so the fade-in mirrors the fade-out.
