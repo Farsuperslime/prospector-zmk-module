@@ -219,7 +219,7 @@ static volatile bool prospector_wake_pending;
 // wake_pending) on activity, so a wake can never be lost to a race with the
 // worker parking -- a token given before the worker blocks is simply consumed
 // the moment it does.
-K_SEMAPHORE_DEFINE(prospector_wake_sem, 0, 1);
+K_SEM_DEFINE(prospector_wake_sem, 0, 1);
 
 // Fade step interval. ~15ms per step gives roughly 750ms total fade from a
 // brightness of 50 -- long enough to read as a deliberate fade rather than a
